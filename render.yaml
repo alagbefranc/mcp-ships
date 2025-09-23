@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: cruisemapper-mcp-server
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
