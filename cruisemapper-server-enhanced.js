@@ -82,76 +82,177 @@ async function searchShipWithPlaywright(shipName) {
     
     // Navigate to ships page
     await page.goto('https://www.cruisemapper.com/ships', { 
-      waitUntil: 'networkidle',
+      waitUntil: 'domcontentloaded',
       timeout: 30000 
     });
     
-    // Wait for page to load completely
+    // Wait for page to load completely and any dynamic content
     await page.waitForTimeout(3000);
     
-    // Try to find the ship using various search strategies
-    const searchStrategies = [
-      // Strategy 1: Look for exact match in links
-      async () => {
-        const exactMatch = await page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
-        if (await exactMatch.count() > 0) {
-          const href = await exactMatch.getAttribute('href');
-          const text = await exactMatch.textContent();
-          return { href, text: text.trim() };
-        }
-        return null;
-      },
-      
-      // Strategy 2: Search with case-insensitive partial match
-      async () => {
-        const shipLinks = await page.locator('a[href*="/ships/"]').all();
-        for (const link of shipLinks) {
-          const text = await link.textContent();
-          if (text && (
-            text.toLowerCase().includes(shipName.toLowerCase()) ||
-            shipName.toLowerCase().includes(text.toLowerCase())
-          )) {
-            const href = await link.getAttribute('href');
-            return { href, text: text.trim() };
-          }
-        }
-        return null;
-      },
-      
-      // Strategy 3: Use search functionality if available
-      async () => {
-        const searchBox = page.locator('input[type="search"], input[placeholder*="search" i], #search');
-        if (await searchBox.count() > 0) {
-          await searchBox.fill(shipName);
-          await page.keyboard.press('Enter');
-          await page.waitForTimeout(2000);
-          
-          const resultLink = await page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
-          if (await resultLink.count() > 0) {
-            const href = await resultLink.getAttribute('href');
-            const text = await resultLink.textContent();
-            return { href, text: text.trim() };
-          }
-        }
-        return null;
-      }
-    ];
+    // Wait for ship links to be visible
+    await page.waitForSelector('a[href*="/ships/"]', { timeout: 10000 });
     
-    // Try each strategy
-    for (const strategy of searchStrategies) {
-      const result = await strategy();
-      if (result) {
+    console.error('✅ Ships page loaded, searching for ship...');
+    
+    // Strategy 1: Try to find and click on the ship directly
+    try {
+      // Look for exact ship name match
+      const exactMatch = page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
+      if (await exactMatch.count() > 0) {
+        console.error(`Found exact match for: ${shipName}`);
+        const href = await exactMatch.getAttribute('href');
+        const text = await exactMatch.textContent();
         await page.close();
-        console.error(`✅ Found ship via Playwright: ${result.text}`);
         return {
-          name: result.text,
-          url: `https://www.cruisemapper.com${result.href}`,
-          id: result.href.match(/-(-\d+)$/)?.[1] || 'unknown'
+          name: text.trim(),
+          url: `https://www.cruisemapper.com${href}`,
+          id: href.match(/-(-\d+)$/)?.[1] || href.match(/-(\d+)$/)?.[1] || 'unknown'
         };
       }
+    } catch (error) {
+      console.error('Exact match search failed:', error.message);
+    }
+    
+    // Strategy 2: Use page search/filter functionality if available
+    try {
+      // Look for search input, filter input, or any input that might filter ships
+      const searchSelectors = [
+        'input[type="search"]',
+        'input[placeholder*="search" i]',
+        'input[placeholder*="filter" i]',
+        'input[placeholder*="ship" i]',
+        '#search',
+        '.search-input',
+        '[data-search]'
+      ];
+      
+      let searchInput = null;
+      for (const selector of searchSelectors) {
+        const input = page.locator(selector);
+        if (await input.count() > 0) {
+          searchInput = input.first();
+          console.error(`Found search input: ${selector}`);
+          break;
+        }
+      }
+      
+      if (searchInput) {
+        // Clear and type ship name
+        await searchInput.clear();
+        await searchInput.fill(shipName);
+        await page.keyboard.press('Enter');
+        
+        // Wait for results to load
+        await page.waitForTimeout(2000);
+        
+        // Look for the ship in results
+        const resultLink = page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
+        if (await resultLink.count() > 0) {
+          console.error(`Found ship via search: ${shipName}`);
+          const href = await resultLink.getAttribute('href');
+          const text = await resultLink.textContent();
+          await page.close();
+          return {
+            name: text.trim(),
+            url: `https://www.cruisemapper.com${href}`,
+            id: href.match(/-(-\d+)$/)?.[1] || href.match(/-(\d+)$/)?.[1] || 'unknown'
+          };
+        }
+      }
+    } catch (error) {
+      console.error('Search input strategy failed:', error.message);
+    }
+    
+    // Strategy 3: Scroll through the page and look for partial matches
+    try {
+      console.error('Trying partial match strategy...');
+      
+      // Scroll down to load more ships if needed (lazy loading)
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight / 2);
+      });
+      await page.waitForTimeout(1000);
+      
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+      await page.waitForTimeout(2000);
+      
+      // Get all ship links and search for partial matches
+      const shipLinks = await page.locator('a[href*="/ships/"]').all();
+      console.error(`Found ${shipLinks.length} ship links to check`);
+      
+      for (let i = 0; i < Math.min(shipLinks.length, 200); i++) {
+        const link = shipLinks[i];
+        try {
+          const text = await link.textContent();
+          const href = await link.getAttribute('href');
+          
+          if (text && href) {
+            const shipText = text.trim();
+            const shipNameLower = shipName.toLowerCase();
+            const linkTextLower = shipText.toLowerCase();
+            
+            // Check for various match types
+            if (
+              linkTextLower === shipNameLower ||
+              linkTextLower.includes(shipNameLower) ||
+              shipNameLower.includes(linkTextLower) ||
+              // Check for ship name with different spacing/punctuation
+              linkTextLower.replace(/[\s-_.]/g, '') === shipNameLower.replace(/[\s-_.]/g, '')
+            ) {
+              console.error(`Found partial match: "${shipText}" for search "${shipName}"`);
+              await page.close();
+              return {
+                name: shipText,
+                url: `https://www.cruisemapper.com${href}`,
+                id: href.match(/-(\d+)$/)?.[1] || 'unknown'
+              };
+            }
+          }
+        } catch (linkError) {
+          // Skip problematic links
+          continue;
+        }
+      }
+    } catch (error) {
+      console.error('Partial match strategy failed:', error.message);
+    }
+    
+    // Strategy 4: Try clicking on cruise line filters if available
+    try {
+      console.error('Trying cruise line filter strategy...');
+      
+      // Look for Royal Caribbean filter (since Icon Of The Seas is Royal Caribbean)
+      const cruiseLines = ['Royal Caribbean', 'royal-caribbean', 'RC'];
+      for (const cruiseLine of cruiseLines) {
+        const filter = page.locator(`*:has-text("${cruiseLine}"):not(a[href*="/ships/"])`).first();
+        if (await filter.count() > 0) {
+          console.error(`Trying to click ${cruiseLine} filter`);
+          await filter.click();
+          await page.waitForTimeout(2000);
+          
+          // Now search for the ship in filtered results
+          const filteredResult = page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
+          if (await filteredResult.count() > 0) {
+            const href = await filteredResult.getAttribute('href');
+            const text = await filteredResult.textContent();
+            await page.close();
+            return {
+              name: text.trim(),
+              url: `https://www.cruisemapper.com${href}`,
+              id: href.match(/-(\d+)$/)?.[1] || 'unknown'
+            };
+          }
+          break;
+        }
+      }
+    } catch (error) {
+      console.error('Cruise line filter strategy failed:', error.message);
     }
     
     await page.close();
+    console.error(`❌ Could not find ship "${shipName}" using any Playwright strategy`);
     return null;
     
   } catch (error) {
@@ -352,89 +453,165 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// List all ships from the main ships page
+// List all ships from the main ships page using Playwright
 async function handleListAllShips(args) {
   const { cruise_line, limit = 50 } = args;
-  const url = 'https://www.cruisemapper.com/ships';
   
   try {
-    const $ = await scrapeCruiseMapper(url);
+    console.error(`🚢 Listing ships with limit: ${limit}, cruise_line: ${cruise_line || 'none'}`);
+    
+    // Use Playwright for better ship detection
+    const context = await initBrowser();
+    const page = await context.newPage();
+    
+    await page.goto('https://www.cruisemapper.com/ships', { 
+      waitUntil: 'domcontentloaded',
+      timeout: 30000 
+    });
+    
+    await page.waitForTimeout(3000);
+    await page.waitForSelector('a[href*="/ships/"]', { timeout: 10000 });
+    
+    // Scroll to load more content if needed
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight / 2);
+    });
+    await page.waitForTimeout(1000);
+    
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await page.waitForTimeout(2000);
+    
+    // Get all ship links
+    const shipLinks = await page.locator('a[href*="/ships/"]').all();
+    console.error(`Found ${shipLinks.length} ship links`);
+    
     const ships = [];
     
-    // Extract all ship links from the page
-    $('a[href*="/ships/"]').each((i, el) => {
-      const $el = $(el);
-      const href = $el.attr('href');
-      const text = $el.text().trim();
-      
-      // Filter out non-ship links
-      if (href && href.match(/\/ships\/[a-z0-9-]+-\d+$/) && text) {
-        const shipId = href.match(/-(\d+)$/)?.[1] || '';
-        const shipData = {
-          name: text,
-          url: `https://www.cruisemapper.com${href}`,
-          id: shipId
-        };
+    // Process each ship link
+    for (let i = 0; i < Math.min(shipLinks.length, limit * 3); i++) {
+      try {
+        const link = shipLinks[i];
+        const href = await link.getAttribute('href');
+        const text = await link.textContent();
         
-        // Cache the ship ID for later use
-        if (shipId) {
-          shipIdCache.set(safeToLowerCase(text), shipId);
+        if (href && text && href.match(/\/ships\/[a-z0-9-]+-\d+$/) && text.trim()) {
+          const shipName = text.trim();
+          
+          // Filter by cruise line if specified
+          const shouldInclude = !cruise_line || 
+            safeToLowerCase(shipName).includes(safeToLowerCase(cruise_line)) ||
+            safeToLowerCase(cruise_line).includes('royal') && safeToLowerCase(shipName).includes('seas') ||
+            safeToLowerCase(cruise_line).includes('carnival') && (safeToLowerCase(shipName).includes('carnival') || safeToLowerCase(shipName).includes('inspiration')) ||
+            safeToLowerCase(cruise_line).includes('msc') && safeToLowerCase(shipName).includes('msc');
+          
+          if (shouldInclude) {
+            const shipId = href.match(/-(\d+)$/)?.[1] || 'unknown';
+            const shipData = {
+              name: shipName,
+              url: `https://www.cruisemapper.com${href}`,
+              id: shipId
+            };
+            
+            // Cache the ship ID for later use
+            if (shipId && shipId !== 'unknown') {
+              shipIdCache.set(safeToLowerCase(shipName), shipId);
+            }
+            
+            ships.push(shipData);
+            
+            // Stop if we have enough ships
+            if (ships.length >= limit) {
+              break;
+            }
+          }
         }
-        
-        // Filter by cruise line if specified
-        if (!cruise_line || safeToLowerCase(text).includes(safeToLowerCase(cruise_line))) {
-          ships.push(shipData);
-        }
+      } catch (linkError) {
+        // Skip problematic links
+        continue;
       }
-    });
+    }
     
-    // Also look for ship information in tables
-    $('table tr').each((i, row) => {
-      const $row = $(row);
-      const shipName = $row.find('td:first-child a').text().trim();
-      const shipHref = $row.find('td:first-child a').attr('href');
-      
-      if (shipName && shipHref) {
-        const shipId = shipHref.match(/-(\d+)$/)?.[1] || '';
-        if (shipId) {
-          shipIdCache.set(safeToLowerCase(shipName), shipId);
-        }
-        
-        const existingShip = ships.find(s => s.name === shipName);
-        if (!existingShip) {
-          ships.push({
-            name: shipName,
-            url: `https://www.cruisemapper.com${shipHref}`,
-            id: shipId
-          });
-        }
-      }
-    });
-    
-    // Remove duplicates and limit results
-    const uniqueShips = Array.from(new Map(ships.map(s => [s.name, s])).values());
-    const limitedShips = uniqueShips.slice(0, limit);
+    await page.close();
+    console.error(`Returning ${ships.length} ships after filtering`);
     
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          total_found: uniqueShips.length,
-          returned: limitedShips.length,
+          total_found: ships.length,
+          returned: ships.length,
           cruise_line_filter: cruise_line || 'none',
-          ships: limitedShips,
-          note: 'Use ship names from this list for detailed searches'
+          ships: ships,
+          note: 'Use ship names from this list for detailed searches',
+          method: 'Playwright enhanced scraping'
         }, null, 2)
       }]
     };
     
   } catch (error) {
-    return {
-      content: [{
-        type: 'text',
-        text: `Could not fetch ship list: ${error.message}`
-      }]
-    };
+    console.error('Playwright list ships failed, falling back to Axios:', error.message);
+    
+    // Fallback to original Axios method
+    try {
+      const url = 'https://www.cruisemapper.com/ships';
+      const $ = await scrapeCruiseMapper(url, false); // Use Axios fallback
+      const ships = [];
+      
+      // Extract all ship links from the page
+      $('a[href*="/ships/"]').each((i, el) => {
+        const $el = $(el);
+        const href = $el.attr('href');
+        const text = $el.text().trim();
+        
+        // Filter out non-ship links
+        if (href && href.match(/\/ships\/[a-z0-9-]+-\d+$/) && text) {
+          const shipId = href.match(/-(\d+)$/)?.[1] || '';
+          const shipData = {
+            name: text,
+            url: `https://www.cruisemapper.com${href}`,
+            id: shipId
+          };
+          
+          // Cache the ship ID for later use
+          if (shipId) {
+            shipIdCache.set(safeToLowerCase(text), shipId);
+          }
+          
+          // Filter by cruise line if specified
+          if (!cruise_line || safeToLowerCase(text).includes(safeToLowerCase(cruise_line))) {
+            ships.push(shipData);
+          }
+        }
+      });
+      
+      // Remove duplicates and limit results
+      const uniqueShips = Array.from(new Map(ships.map(s => [s.name, s])).values());
+      const limitedShips = uniqueShips.slice(0, limit);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            total_found: uniqueShips.length,
+            returned: limitedShips.length,
+            cruise_line_filter: cruise_line || 'none',
+            ships: limitedShips,
+            note: 'Use ship names from this list for detailed searches',
+            method: 'Axios fallback scraping'
+          }, null, 2)
+        }]
+      };
+      
+    } catch (fallbackError) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Could not fetch ship list: ${fallbackError.message}`
+        }]
+      };
+    }
   }
 }
 
@@ -532,17 +709,27 @@ async function handleShipSchedule(args) {
       return null;
     },
     
-    // Strategy 3: Try common IDs
+    // Strategy 3: Try common IDs with validation
     async () => {
       const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
-      const commonIds = ['542', '737', '734', '735', '736', '738', '739', '740', '741', '742'];
+      // Remove 542 as it was causing wrong results
+      const commonIds = ['737', '734', '735', '736', '738', '739', '740', '741', '742', '1000', '1001', '1002'];
       
       for (const id of commonIds) {
         const url = `https://www.cruisemapper.com/ships/${shipSlug}-${id}`;
         try {
           const $ = await scrapeCruiseMapper(url);
-          shipIdCache.set(safeToLowerCase(ship_name), id);
-          return { $, url };
+          
+          // Validate we got the right ship
+          const pageTitle = $('title').text().toLowerCase();
+          const h1Text = $('h1').first().text().toLowerCase();
+          const shipNameLower = safeToLowerCase(ship_name);
+          
+          if (pageTitle.includes(shipNameLower) || h1Text.includes(shipNameLower)) {
+            shipIdCache.set(safeToLowerCase(ship_name), id);
+            console.error(`✅ Found correct ship schedule with ID ${id}`);
+            return { $, url };
+          }
         } catch (error) {
           continue;
         }
@@ -716,19 +903,32 @@ async function handleShipFullDetails(args) {
       }
     },
     
-    // Strategy 3: Try common ship ID patterns
+    // Strategy 3: Try common ship ID patterns with validation
     async () => {
       const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
-      const commonIds = ['542', '737', '734', '735', '736', '738', '739', '740', '741', '742', '1000', '1001', '1002'];
+      // Remove 542 as it was causing wrong results (Carnival Inspiration)
+      const commonIds = ['737', '734', '735', '736', '738', '739', '740', '741', '742', '1000', '1001', '1002', '1003', '1004', '1005'];
       
       for (const id of commonIds) {
         const url = `https://www.cruisemapper.com/ships/${shipSlug}-${id}`;
         try {
           const $ = await scrapeCruiseMapper(url);
-          // Cache the working ID
-          shipIdCache.set(safeToLowerCase(ship_name), id);
-          console.error(`Found ship with common ID: ${url}`);
-          return { $, url };
+          
+          // Validate we got the right ship by checking the title and heading
+          const pageTitle = $('title').text().toLowerCase();
+          const h1Text = $('h1').first().text().toLowerCase();
+          const shipNameLower = safeToLowerCase(ship_name);
+          
+          const titleMatch = pageTitle.includes(shipNameLower) || shipNameLower.includes(pageTitle.split(' ')[0]);
+          const headingMatch = h1Text.includes(shipNameLower) || shipNameLower.includes(h1Text.split(' ')[0]);
+          
+          if (titleMatch || headingMatch) {
+            shipIdCache.set(safeToLowerCase(ship_name), id);
+            console.error(`✅ Found correct ship with ID ${id}: ${pageTitle}`);
+            return { $, url };
+          } else {
+            console.error(`❌ ID ${id} returned wrong ship: "${pageTitle}" for search "${ship_name}"`);
+          }
         } catch (error) {
           continue;
         }
