@@ -25,6 +25,11 @@ const server = new Server(
 // Cache for ship IDs to improve performance
 const shipIdCache = new Map();
 
+// Helper function to safely convert to lowercase
+function safeToLowerCase(str) {
+  return str && typeof str === 'string' ? str.toLowerCase() : '';
+}
+
 // Helper function to scrape CruiseMapper
 async function scrapeCruiseMapper(url) {
   try {
@@ -143,22 +148,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'list_all_ships':
-        return await handleListAllShips(args);
+        return await handleListAllShips(args || {});
         
       case 'search_ship_schedule':
-        return await handleShipSchedule(args);
+        return await handleShipSchedule(args || {});
       
       case 'get_ship_full_details':
-        return await handleShipFullDetails(args);
+        return await handleShipFullDetails(args || {});
       
       case 'get_port_schedule':
-        return await handlePortSchedule(args);
+        return await handlePortSchedule(args || {});
       
       case 'search_cruise_by_date':
-        return await handleCruiseByDate(args);
+        return await handleCruiseByDate(args || {});
         
       case 'get_cruise_lines':
-        return await handleGetCruiseLines(args);
+        return await handleGetCruiseLines(args || {});
       
       default:
         return {
@@ -206,11 +211,11 @@ async function handleListAllShips(args) {
         
         // Cache the ship ID for later use
         if (shipId) {
-          shipIdCache.set(text.toLowerCase(), shipId);
+          shipIdCache.set(safeToLowerCase(text), shipId);
         }
         
         // Filter by cruise line if specified
-        if (!cruise_line || text.toLowerCase().includes(cruise_line.toLowerCase())) {
+        if (!cruise_line || safeToLowerCase(text).includes(safeToLowerCase(cruise_line))) {
           ships.push(shipData);
         }
       }
@@ -225,7 +230,7 @@ async function handleListAllShips(args) {
       if (shipName && shipHref) {
         const shipId = shipHref.match(/-(\d+)$/)?.[1] || '';
         if (shipId) {
-          shipIdCache.set(shipName.toLowerCase(), shipId);
+          shipIdCache.set(safeToLowerCase(shipName), shipId);
         }
         
         const existingShip = ships.find(s => s.name === shipName);
@@ -312,9 +317,20 @@ async function handleGetCruiseLines(args) {
 async function handleShipSchedule(args) {
   const { ship_name } = args;
   
+  // Validate ship_name parameter
+  if (!ship_name || typeof ship_name !== 'string') {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: ship_name parameter is required and must be a string'
+      }],
+      isError: true
+    };
+  }
+  
   // Try to find ship ID from cache or construct URL
-  const cachedId = shipIdCache.get(ship_name.toLowerCase());
-  const shipSlug = ship_name.toLowerCase().replace(/\s+/g, '-');
+  const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
+  const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
   
   const possibleUrls = [];
   if (cachedId) {
@@ -341,7 +357,7 @@ async function handleShipSchedule(args) {
       // Extract ship ID from successful URL
       const shipId = url.match(/-(\d+)$/)?.[1];
       if (shipId) {
-        shipIdCache.set(ship_name.toLowerCase(), shipId);
+        shipIdCache.set(safeToLowerCase(ship_name), shipId);
       }
       break;
     } catch (error) {
@@ -388,7 +404,7 @@ async function handleShipSchedule(args) {
       headers.push($(th).text().trim());
     });
     
-    if (headers.some(h => h.toLowerCase().includes('date') || h.toLowerCase().includes('port'))) {
+    if (headers.some(h => safeToLowerCase(h).includes('date') || safeToLowerCase(h).includes('port'))) {
       $table.find('tr').each((j, row) => {
         if (j === 0) return; // Skip header
         const rowData = {};
@@ -416,7 +432,7 @@ async function handleShipSchedule(args) {
         itineraries: itineraries.slice(0, 10),
         schedules_found: schedules.length,
         schedules: schedules.slice(0, 20),
-        ship_id: shipIdCache.get(ship_name.toLowerCase()) || 'unknown'
+        ship_id: shipIdCache.get(safeToLowerCase(ship_name)) || 'unknown'
       }, null, 2)
     }]
   };
@@ -426,9 +442,20 @@ async function handleShipSchedule(args) {
 async function handleShipFullDetails(args) {
   const { ship_name } = args;
   
+  // Validate ship_name parameter
+  if (!ship_name || typeof ship_name !== 'string') {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: ship_name parameter is required and must be a string'
+      }],
+      isError: true
+    };
+  }
+  
   // Try to find the ship page
-  const cachedId = shipIdCache.get(ship_name.toLowerCase());
-  const shipSlug = ship_name.toLowerCase().replace(/\s+/g, '-');
+  const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
+  const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
   
   let url = cachedId 
     ? `https://www.cruisemapper.com/ships/${shipSlug}-${cachedId}`
@@ -513,10 +540,22 @@ async function handleShipFullDetails(args) {
   }
 }
 
-// Port schedule handler remains the same
+// Port schedule handler
 async function handlePortSchedule(args) {
   const { port_name } = args;
-  const portSlug = port_name.toLowerCase().replace(/\s+/g, '-');
+  
+  // Validate port_name parameter
+  if (!port_name || typeof port_name !== 'string') {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: port_name parameter is required and must be a string'
+      }],
+      isError: true
+    };
+  }
+  
+  const portSlug = safeToLowerCase(port_name).replace(/\s+/g, '-');
   const url = `https://www.cruisemapper.com/ports/${portSlug}`;
   
   try {
@@ -536,7 +575,7 @@ async function handlePortSchedule(args) {
       
       // Get headers
       $table.find('th').each((j, th) => {
-        headers.push($(th).text().trim().toLowerCase());
+        headers.push(safeToLowerCase($(th).text().trim()));
       });
       
       // Process rows if we have relevant headers
@@ -598,7 +637,7 @@ async function handleCruiseByDate(args) {
   }
   
   if (destination) {
-    params.append('destination', destination.toLowerCase());
+    params.append('destination', safeToLowerCase(destination));
   }
   
   if (params.toString()) {
