@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "MCP server for accessing CruiseMapper cruise ship schedules and itineraries",
   "type": "module",
-  "main": "server.js",
+  "main": "fixed-cruisemapper-server-enhanced.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node fixed-cruisemapper-server-enhanced.js",
+    "dev": "node --watch fixed-cruisemapper-server-enhanced.js",
     "install-browsers": "npx playwright install chromium"
   },
   "dependencies": {
@@ -14,7 +14,7 @@
     "axios": "^1.7.2",
     "cheerio": "^1.0.0",
     "express": "^4.18.2",
-    "playwright": "^1.40.0",
+    "playwright": "^1.55.1",
     "uuid": "^9.0.1"
   },
   "keywords": [

@@ -1,26 +1,32 @@
-FROM mcr.microsoft.com/playwright:v1.40.0-focal
+FROM mcr.microsoft.com/playwright:v1.55.1-focal
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files first for better caching
+COPY package.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (use npm install to handle version mismatches gracefully)
+RUN npm install --only=production --no-audit --no-fund
 
 # Install Playwright browsers
-RUN npx playwright install chromium
+RUN npx playwright install chromium --with-deps
 
 # Copy server files
-COPY cruisemapper-server-enhanced.js ./
-COPY web-server.js ./
+COPY fixed-cruisemapper-server-enhanced.js ./
+COPY fixed-web-server.js ./
+
+# Create a non-root user for security
+RUN groupadd -r nodeuser && useradd -r -g nodeuser nodeuser
+RUN chown -R nodeuser:nodeuser /app
+USER nodeuser
 
 # Expose port for web server
 EXPOSE 8080
 
 # Set environment variables for headless operation
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV NODE_ENV=production
 
 # Start the web server
-CMD ["node", "web-server.js"]
+CMD ["node", "fixed-web-server.js"]
