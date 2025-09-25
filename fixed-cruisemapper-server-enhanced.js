@@ -1187,8 +1187,69 @@ async function main() {
   console.error('Available tools:', TOOLS.map(t => t.name).join(', '));
 }
 
-// Run the server
-main().catch((error) => {
-  console.error('Server error:', error);
-  process.exit(1);
-});
+// Add SSE endpoint for Telnyx MCP integration
+export function createSSEHandler() {
+  return async (req, res) => {
+    // Set SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+    
+    // Handle MCP requests via SSE
+    const handleMCPRequest = async (data) => {
+      try {
+        const request = JSON.parse(data);
+        let response;
+        
+        if (request.method === 'tools/list') {
+          response = { tools: TOOLS };
+        } else if (request.method === 'tools/call') {
+          response = await handleToolCall(request.params);
+        }
+        
+        // Send response via SSE
+        res.write(`data: ${JSON.stringify(response)}\n\n`);
+      } catch (error) {
+        res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      }
+    };
+    
+    // Keep connection alive
+    const keepAlive = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 30000);
+    
+    req.on('close', () => {
+      clearInterval(keepAlive);
+    });
+  };
+}
+
+// Helper function to handle tool calls
+async function handleToolCall(params) {
+  const { name, arguments: args } = params;
+  
+  switch (name) {
+    case 'list_all_ships':
+      return await handleListAllShips(args || {});
+    case 'get_ship_full_details':
+      return await handleShipFullDetails(args || {});
+    case 'search_ships':
+      return await handleShipSearch(args || {});
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// Export for use in web server or run directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  // Run as standalone MCP server
+  main().catch((error) => {
+    console.error('Server error:', error);
+    process.exit(1);
+  });
+}

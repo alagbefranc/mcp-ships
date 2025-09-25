@@ -5,8 +5,9 @@
   "type": "module",
   "main": "fixed-cruisemapper-server-enhanced.js",
   "scripts": {
-    "start": "node fixed-cruisemapper-server-enhanced.js",
-    "dev": "node --watch fixed-cruisemapper-server-enhanced.js",
+    "start": "node telnyx-mcp-server.js",
+    "mcp": "node fixed-cruisemapper-server-enhanced.js",
+    "dev": "node --watch telnyx-mcp-server.js",
     "install-browsers": "npx playwright install chromium"
   },
   "dependencies": {
