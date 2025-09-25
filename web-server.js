@@ -21,9 +21,25 @@ app.get('/', (req, res) => {
 // MCP request endpoint
 app.post('/mcp', async (req, res) => {
   const sessionId = req.headers['x-session-id'] || uuidv4();
-  const { method, params, id } = req.body;
+  let { method, params, id } = req.body;
   
   console.log(`[${sessionId}] Received request:`, method);
+  
+  // Handle direct tool calls from Telnyx (compatibility layer)
+  const directTools = [
+    'list_all_ships', 'search_ship_schedule', 'get_ship_full_details',
+    'get_port_schedule', 'search_cruise_by_date', 'get_cruise_lines'
+  ];
+  
+  if (directTools.includes(method)) {
+    console.log(`[${sessionId}] Converting direct tool call: ${method}`);
+    const originalMethod = method;
+    method = 'tools/call';
+    params = {
+      name: originalMethod,
+      arguments: params || {}
+    };
+  }
   
   try {
     // Get or create MCP server for this session
