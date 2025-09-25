@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  cruisemapper-mcp:
+    build:
+      context: .
+      dockerfile: fixed-Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - playwright_cache:/ms-playwright
+
+volumes:
+  playwright_cache:

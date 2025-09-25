@@ -1,11 +1,19 @@
 services:
   - type: web
-    name: cruisemapper-mcp-server
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    region: oregon
-    plan: free
-    healthCheckPath: /
+    name: cruisemapper-mcp
+    env: node
+    buildCommand: npm install
+    startCommand: node fixed-web-server.js
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+    disk:
+      name: cache
+      mountPath: /opt/render/.cache
+      sizeGB: 1
+    healthCheckPath: /

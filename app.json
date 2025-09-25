@@ -1,0 +1,35 @@
+{
+  "name": "CruiseMapper MCP Server",
+  "description": "Fixed CruiseMapper MCP Server with Playwright integration for Telnyx AI Assistant",
+  "repository": "https://github.com/alagbefranc/mcp-ships",
+  "logo": "https://via.placeholder.com/120x120.png?text=🚢",
+  "keywords": ["mcp", "cruise", "telnyx", "ai-assistant", "playwright"],
+  "stack": "heroku-22",
+  "buildpacks": [
+    {
+      "url": "https://github.com/mxschmitt/heroku-playwright-buildpack.git"
+    },
+    {
+      "url": "heroku/nodejs"
+    }
+  ],
+  "env": {
+    "NODE_ENV": {
+      "description": "Node environment",
+      "value": "production"
+    },
+    "PLAYWRIGHT_BROWSERS_PATH": {
+      "description": "Path for Playwright browsers",
+      "value": "/app/.cache/ms-playwright"
+    }
+  },
+  "scripts": {
+    "postdeploy": "npx playwright install chromium"
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}
