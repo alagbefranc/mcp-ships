@@ -1,6 +1,29 @@
+.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+*.log
+>>>>>>> a1b6bec12230f5a8b273e907075bb097e5d8b330
+dist/
+build/
 node_modules/
 .env
+.env.local
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 .DS_Store
+dist/
+build/
+=======
+.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+*.log
+>>>>>>> a1b6bec12230f5a8b273e907075bb097e5d8b330
 dist/
 build/
