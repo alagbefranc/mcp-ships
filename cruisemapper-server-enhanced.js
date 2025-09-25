@@ -8,6 +8,53 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { chromium } from 'playwright';
+
+// Global browser instance for reuse
+let browser = null;
+let browserContext = null;
+
+// Initialize browser
+async function initBrowser() {
+  if (!browser) {
+    console.error('Initializing Playwright browser...');
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+      ]
+    });
+    
+    browserContext = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 720 }
+    });
+    
+    console.error('Playwright browser initialized');
+  }
+  return browserContext;
+}
+
+// Cleanup browser on exit
+process.on('SIGINT', async () => {
+  if (browser) {
+    await browser.close();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  if (browser) {
+    await browser.close();
+  }
+  process.exit(0);
+});
 
 // Create the server with proper configuration
 const server = new Server(
@@ -25,24 +72,144 @@ const server = new Server(
 // Cache for ship IDs to improve performance
 const shipIdCache = new Map();
 
+// Enhanced ship search using Playwright for dynamic content
+async function searchShipWithPlaywright(shipName) {
+  try {
+    const context = await initBrowser();
+    const page = await context.newPage();
+    
+    console.error(`🔍 Searching for ship: ${shipName}`);
+    
+    // Navigate to ships page
+    await page.goto('https://www.cruisemapper.com/ships', { 
+      waitUntil: 'networkidle',
+      timeout: 30000 
+    });
+    
+    // Wait for page to load completely
+    await page.waitForTimeout(3000);
+    
+    // Try to find the ship using various search strategies
+    const searchStrategies = [
+      // Strategy 1: Look for exact match in links
+      async () => {
+        const exactMatch = await page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
+        if (await exactMatch.count() > 0) {
+          const href = await exactMatch.getAttribute('href');
+          const text = await exactMatch.textContent();
+          return { href, text: text.trim() };
+        }
+        return null;
+      },
+      
+      // Strategy 2: Search with case-insensitive partial match
+      async () => {
+        const shipLinks = await page.locator('a[href*="/ships/"]').all();
+        for (const link of shipLinks) {
+          const text = await link.textContent();
+          if (text && (
+            text.toLowerCase().includes(shipName.toLowerCase()) ||
+            shipName.toLowerCase().includes(text.toLowerCase())
+          )) {
+            const href = await link.getAttribute('href');
+            return { href, text: text.trim() };
+          }
+        }
+        return null;
+      },
+      
+      // Strategy 3: Use search functionality if available
+      async () => {
+        const searchBox = page.locator('input[type="search"], input[placeholder*="search" i], #search');
+        if (await searchBox.count() > 0) {
+          await searchBox.fill(shipName);
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(2000);
+          
+          const resultLink = await page.locator(`a[href*="/ships/"]:has-text("${shipName}")`).first();
+          if (await resultLink.count() > 0) {
+            const href = await resultLink.getAttribute('href');
+            const text = await resultLink.textContent();
+            return { href, text: text.trim() };
+          }
+        }
+        return null;
+      }
+    ];
+    
+    // Try each strategy
+    for (const strategy of searchStrategies) {
+      const result = await strategy();
+      if (result) {
+        await page.close();
+        console.error(`✅ Found ship via Playwright: ${result.text}`);
+        return {
+          name: result.text,
+          url: `https://www.cruisemapper.com${result.href}`,
+          id: result.href.match(/-(-\d+)$/)?.[1] || 'unknown'
+        };
+      }
+    }
+    
+    await page.close();
+    return null;
+    
+  } catch (error) {
+    console.error(`Playwright ship search failed: ${error.message}`);
+    return null;
+  }
+}
+
 // Helper function to safely convert to lowercase
 function safeToLowerCase(str) {
   return str && typeof str === 'string' ? str.toLowerCase() : '';
 }
 
-// Helper function to scrape CruiseMapper
-async function scrapeCruiseMapper(url) {
-  try {
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      },
-      timeout: 15000
-    });
-    return cheerio.load(response.data);
-  } catch (error) {
-    console.error('Scraping error:', error.message);
-    throw error;
+// Helper function to scrape CruiseMapper with Playwright (preferred) and Axios fallback
+async function scrapeCruiseMapper(url, usePlaywright = true) {
+  console.error(`Scraping: ${url} (${usePlaywright ? 'Playwright' : 'Axios'})`);
+  
+  if (usePlaywright) {
+    try {
+      const context = await initBrowser();
+      const page = await context.newPage();
+      
+      // Set timeout and navigate
+      await page.goto(url, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 30000 
+      });
+      
+      // Wait for content to load
+      await page.waitForTimeout(2000);
+      
+      // Get page content
+      const content = await page.content();
+      await page.close();
+      
+      console.error(`✅ Playwright successful for: ${url}`);
+      return cheerio.load(content);
+      
+    } catch (error) {
+      console.error(`❌ Playwright failed for ${url}: ${error.message}`);
+      // Fallback to Axios
+      return await scrapeCruiseMapper(url, false);
+    }
+  } else {
+    // Fallback to Axios method
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        timeout: 15000
+      });
+      console.error(`✅ Axios successful for: ${url}`);
+      return cheerio.load(response.data);
+    } catch (error) {
+      console.error(`❌ Axios failed for ${url}: ${error.message}`);
+      throw error;
+    }
   }
 }
 
@@ -346,46 +513,23 @@ async function handleShipSchedule(args) {
       return null;
     },
     
-    // Strategy 2: Search ships list
+    // Strategy 2: Enhanced Playwright search
     async () => {
-      try {
-        const shipsUrl = 'https://www.cruisemapper.com/ships';
-        const $ = await scrapeCruiseMapper(shipsUrl);
-        
-        let foundShip = null;
-        
-        $('a[href*="/ships/"]').each((i, el) => {
-          const $el = $(el);
-          const text = $el.text().trim();
-          const href = $el.attr('href');
-          
-          if (text && href && (
-            safeToLowerCase(text) === safeToLowerCase(ship_name) ||
-            safeToLowerCase(text).includes(safeToLowerCase(ship_name)) ||
-            safeToLowerCase(ship_name).includes(safeToLowerCase(text))
-          )) {
-            const shipId = href.match(/-(\d+)$/)?.[1];
-            if (shipId) {
-              foundShip = {
-                name: text,
-                url: `https://www.cruisemapper.com${href}`,
-                id: shipId
-              };
-              shipIdCache.set(safeToLowerCase(ship_name), shipId);
-              return false;
-            }
-          }
-        });
-        
-        if (foundShip) {
-          const $ = await scrapeCruiseMapper(foundShip.url);
-          return { $, url: foundShip.url };
+      console.error(`Using enhanced Playwright search for: ${ship_name}`);
+      const foundShip = await searchShipWithPlaywright(ship_name);
+      if (foundShip) {
+        // Cache the discovered ship
+        const shipId = foundShip.id;
+        if (shipId && shipId !== 'unknown') {
+          shipIdCache.set(safeToLowerCase(ship_name), shipId);
+          shipIdCache.set(safeToLowerCase(foundShip.name), shipId);
         }
         
-        return null;
-      } catch (error) {
-        return null;
+        console.error(`Found ship via Playwright: ${foundShip.name} -> ${foundShip.url}`);
+        const $ = await scrapeCruiseMapper(foundShip.url);
+        return { $, url: foundShip.url };
       }
+      return null;
     },
     
     // Strategy 3: Try common IDs

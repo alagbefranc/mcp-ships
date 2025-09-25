@@ -6,13 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "install-browsers": "npx playwright install chromium"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
     "axios": "^1.7.2",
     "cheerio": "^1.0.0",
     "express": "^4.18.2",
+    "playwright": "^1.40.0",
     "uuid": "^9.0.1"
   },
   "keywords": [
@@ -20,6 +22,8 @@
     "cruise",
     "cruisemapper",
     "telnyx",
-    "ai-assistant"
+    "ai-assistant",
+    "playwright",
+    "scraping"
   ]
 }
