@@ -328,44 +328,93 @@ async function handleShipSchedule(args) {
     };
   }
   
-  // Try to find ship ID from cache or construct URL
-  const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
-  const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
-  
-  const possibleUrls = [];
-  if (cachedId) {
-    possibleUrls.push(`https://www.cruisemapper.com/ships/${shipSlug}-${cachedId}`);
-  }
-  
-  // Try common ship IDs
-  const commonIds = ['542', '737', '734', '735', '736', '738', '739', '740', '741', '742'];
-  commonIds.forEach(id => {
-    possibleUrls.push(`https://www.cruisemapper.com/ships/${shipSlug}-${id}`);
-  });
-  
-  possibleUrls.push(`https://www.cruisemapper.com/ships/${shipSlug}`);
-  
-  let $ = null;
-  let successUrl = null;
-  
-  // Try different URL patterns
-  for (const url of possibleUrls) {
-    try {
-      $ = await scrapeCruiseMapper(url);
-      successUrl = url;
-      
-      // Extract ship ID from successful URL
-      const shipId = url.match(/-(\d+)$/)?.[1];
-      if (shipId) {
-        shipIdCache.set(safeToLowerCase(ship_name), shipId);
+  // Use the same multi-strategy approach as handleShipFullDetails
+  const strategies = [
+    // Strategy 1: Try with cached ID
+    async () => {
+      const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
+      if (cachedId) {
+        const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+        const url = `https://www.cruisemapper.com/ships/${shipSlug}-${cachedId}`;
+        try {
+          const $ = await scrapeCruiseMapper(url);
+          return { $, url };
+        } catch (error) {
+          return null;
+        }
       }
-      break;
-    } catch (error) {
-      continue;
+      return null;
+    },
+    
+    // Strategy 2: Search ships list
+    async () => {
+      try {
+        const shipsUrl = 'https://www.cruisemapper.com/ships';
+        const $ = await scrapeCruiseMapper(shipsUrl);
+        
+        let foundShip = null;
+        
+        $('a[href*="/ships/"]').each((i, el) => {
+          const $el = $(el);
+          const text = $el.text().trim();
+          const href = $el.attr('href');
+          
+          if (text && href && (
+            safeToLowerCase(text) === safeToLowerCase(ship_name) ||
+            safeToLowerCase(text).includes(safeToLowerCase(ship_name)) ||
+            safeToLowerCase(ship_name).includes(safeToLowerCase(text))
+          )) {
+            const shipId = href.match(/-(\d+)$/)?.[1];
+            if (shipId) {
+              foundShip = {
+                name: text,
+                url: `https://www.cruisemapper.com${href}`,
+                id: shipId
+              };
+              shipIdCache.set(safeToLowerCase(ship_name), shipId);
+              return false;
+            }
+          }
+        });
+        
+        if (foundShip) {
+          const $ = await scrapeCruiseMapper(foundShip.url);
+          return { $, url: foundShip.url };
+        }
+        
+        return null;
+      } catch (error) {
+        return null;
+      }
+    },
+    
+    // Strategy 3: Try common IDs
+    async () => {
+      const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+      const commonIds = ['542', '737', '734', '735', '736', '738', '739', '740', '741', '742'];
+      
+      for (const id of commonIds) {
+        const url = `https://www.cruisemapper.com/ships/${shipSlug}-${id}`;
+        try {
+          const $ = await scrapeCruiseMapper(url);
+          shipIdCache.set(safeToLowerCase(ship_name), id);
+          return { $, url };
+        } catch (error) {
+          continue;
+        }
+      }
+      return null;
     }
+  ];
+  
+  // Try each strategy
+  let result = null;
+  for (const strategy of strategies) {
+    result = await strategy();
+    if (result) break;
   }
   
-  if (!$) {
+  if (!result) {
     return {
       content: [{
         type: 'text',
@@ -373,6 +422,8 @@ async function handleShipSchedule(args) {
       }]
     };
   }
+  
+  const { $, url } = result;
   
   // Extract comprehensive ship information
   const pageTitle = $('title').text();
@@ -425,14 +476,14 @@ async function handleShipSchedule(args) {
       type: 'text',
       text: JSON.stringify({
         ship_name,
-        url: successUrl,
+        url,
         page_title: pageTitle,
         ship_heading: shipHeading,
         itinerary_links_found: itineraries.length,
         itineraries: itineraries.slice(0, 10),
         schedules_found: schedules.length,
         schedules: schedules.slice(0, 20),
-        ship_id: shipIdCache.get(safeToLowerCase(ship_name)) || 'unknown'
+        ship_id: shipIdCache.get(safeToLowerCase(ship_name)) || 'discovered'
       }, null, 2)
     }]
   };
@@ -453,23 +504,139 @@ async function handleShipFullDetails(args) {
     };
   }
   
-  // Try to find the ship page
-  const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
-  const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+  // Try multiple strategies to find the ship
+  const strategies = [
+    // Strategy 1: Try with cached ID if available
+    async () => {
+      const cachedId = shipIdCache.get(safeToLowerCase(ship_name));
+      if (cachedId) {
+        const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+        const url = `https://www.cruisemapper.com/ships/${shipSlug}-${cachedId}`;
+        try {
+          const $ = await scrapeCruiseMapper(url);
+          return { $, url };
+        } catch (error) {
+          console.error(`Cached URL failed: ${url}`);
+          return null;
+        }
+      }
+      return null;
+    },
+    
+    // Strategy 2: Search the ships list first to find the correct ship ID
+    async () => {
+      try {
+        console.error(`Searching for ship: ${ship_name}`);
+        const shipsUrl = 'https://www.cruisemapper.com/ships';
+        const $ = await scrapeCruiseMapper(shipsUrl);
+        
+        let foundShip = null;
+        
+        // Look for the ship in the ships list
+        $('a[href*="/ships/"]').each((i, el) => {
+          const $el = $(el);
+          const text = $el.text().trim();
+          const href = $el.attr('href');
+          
+          // Check for exact match or close match
+          if (text && href && (
+            safeToLowerCase(text) === safeToLowerCase(ship_name) ||
+            safeToLowerCase(text).includes(safeToLowerCase(ship_name)) ||
+            safeToLowerCase(ship_name).includes(safeToLowerCase(text))
+          )) {
+            const shipId = href.match(/-(\d+)$/)?.[1];
+            if (shipId) {
+              foundShip = {
+                name: text,
+                url: `https://www.cruisemapper.com${href}`,
+                id: shipId
+              };
+              // Cache for future use
+              shipIdCache.set(safeToLowerCase(ship_name), shipId);
+              shipIdCache.set(safeToLowerCase(text), shipId);
+              return false; // Break the loop
+            }
+          }
+        });
+        
+        if (foundShip) {
+          console.error(`Found ship via search: ${foundShip.name} (${foundShip.id})`);
+          const $ = await scrapeCruiseMapper(foundShip.url);
+          return { $, url: foundShip.url };
+        }
+        
+        return null;
+      } catch (error) {
+        console.error('Ship search strategy failed:', error.message);
+        return null;
+      }
+    },
+    
+    // Strategy 3: Try common ship ID patterns
+    async () => {
+      const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+      const commonIds = ['542', '737', '734', '735', '736', '738', '739', '740', '741', '742', '1000', '1001', '1002'];
+      
+      for (const id of commonIds) {
+        const url = `https://www.cruisemapper.com/ships/${shipSlug}-${id}`;
+        try {
+          const $ = await scrapeCruiseMapper(url);
+          // Cache the working ID
+          shipIdCache.set(safeToLowerCase(ship_name), id);
+          console.error(`Found ship with common ID: ${url}`);
+          return { $, url };
+        } catch (error) {
+          continue;
+        }
+      }
+      return null;
+    },
+    
+    // Strategy 4: Try without ID
+    async () => {
+      const shipSlug = safeToLowerCase(ship_name).replace(/\s+/g, '-');
+      const url = `https://www.cruisemapper.com/ships/${shipSlug}`;
+      try {
+        const $ = await scrapeCruiseMapper(url);
+        console.error(`Found ship without ID: ${url}`);
+        return { $, url };
+      } catch (error) {
+        return null;
+      }
+    }
+  ];
   
-  let url = cachedId 
-    ? `https://www.cruisemapper.com/ships/${shipSlug}-${cachedId}`
-    : `https://www.cruisemapper.com/ships/${shipSlug}`;
+  // Try each strategy until one works
+  let result = null;
+  for (const strategy of strategies) {
+    result = await strategy();
+    if (result) break;
+  }
+  
+  if (!result) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Could not find ship "${ship_name}" on CruiseMapper. The ship name might be incorrect or the ship might not be in their database. Try using 'list_all_ships' to find the exact ship name.`
+      }]
+    };
+  }
+  
+  const { $, url } = result;
   
   try {
-    const $ = await scrapeCruiseMapper(url);
-    
     // Extract comprehensive ship details
     const details = {
       name: $('h1').first().text().trim() || ship_name,
       url: url,
-      ship_id: cachedId || 'unknown'
+      search_term: ship_name
     };
+    
+    // Extract ship ID from URL if available
+    const shipId = url.match(/-(-\d+)$/)?.[1];
+    if (shipId) {
+      details.ship_id = shipId;
+    }
     
     // Extract all specification data
     const specs = {};
@@ -523,6 +690,9 @@ async function handleShipFullDetails(args) {
       details.amenities = amenities.slice(0, 20);
     }
     
+    // Add page title for context
+    details.page_title = $('title').text().trim();
+    
     return {
       content: [{
         type: 'text',
@@ -534,7 +704,7 @@ async function handleShipFullDetails(args) {
     return {
       content: [{
         type: 'text',
-        text: `Could not fetch details for ${ship_name}: ${error.message}`
+        text: `Error processing ship details for ${ship_name}: ${error.message}`
       }]
     };
   }
